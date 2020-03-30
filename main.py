@@ -12,28 +12,27 @@ original_subset_image_names = os.listdir(original_subset_dir)
 detection_subset_image_names = os.listdir(detection_subset_dir)
 
 
-def read_original_subset():
+def detect_barcode():
     for image_name in original_subset_image_names:
         print(image_name)
 
+        # Read original and ground truth images
         original_img = cv2.imread(original_subset_dir + '/' + image_name)
         detected_img = cv2.imread(detection_subset_dir + '/' + image_name)
 
-        #masked_img = cv2.bitwise_and(original_img, detected_img)
         gray_img = cv2.cvtColor(original_img, cv2.COLOR_BGR2GRAY)
         #blurred = cv2.GaussianBlur(gray_img, (3, 3), 0)
 
-        edges, plot_input = find_edges(original_img)
-
-        # hough_transform(image_name, gray_img, edges)
+        # Obtain an edge map of the input image
+        edges, plot_input = obtain_edge_map(original_img)
 
         masked_img = cv2.bitwise_and(detected_img, cv2.cvtColor(edges, cv2.COLOR_GRAY2RGB))
 
+        # Utilize Hough transform on edge map
         accumulator, thetas, rhos = find_hough_lines(cv2.cvtColor(masked_img, cv2.COLOR_RGB2GRAY))
 
-        lined_image = hough_to_image_space(original_img, accumulator, thetas, rhos)
-
-        plot_input = np.concatenate((plot_input, lined_image), axis=1)
+        # Transform Hough space to image space
+        plot_input = hough_to_image_space(original_img, detected_img, accumulator, thetas, rhos, plot_input)
 
         # PLOT
         plt.imshow(plot_input, cmap='gray')
@@ -41,7 +40,7 @@ def read_original_subset():
         plt.show()
 
 
-def find_edges(img):
+def obtain_edge_map(img):
     edges = cv2.Canny(img, 100, 200)
     # sigma = 0.33
     # v = np.median(img)
@@ -52,25 +51,6 @@ def find_edges(img):
     plot_input = np.concatenate((img, cv2.cvtColor(edges, cv2.COLOR_GRAY2RGB)), axis=1)
 
     return edges, plot_input
-
-
-def hough_transform(image_name, img, edges):
-    lines = cv2.HoughLines(edges, 1, np.pi/90, 0)
-    print(lines)
-
-    for rho, theta in lines[0]:
-        a = np.cos(theta)
-        b = np.sin(theta)
-        x0 = a * rho
-        y0 = b * rho
-        x1 = int(x0 + 1000 * (-b))
-        y1 = int(y0 + 1000 * (a))
-        x2 = int(x0 - 1000 * (-b))
-        y2 = int(y0 - 1000 * (a))
-
-        cv2.line(img, (x1, y1), (x2, y2), (0, 0, 255), 2)
-
-    cv2.imwrite('houghlines' + image_name + '.jpg', img)
 
 
 def find_hough_lines(img):
@@ -87,7 +67,10 @@ def find_hough_lines(img):
     num_thetas = len(thetas)
 
     # Hough accumulator array of theta vs rho
+    # 2 * diag_len rows, num_thetas columns
     accumulator = np.zeros((2 * diag_len, num_thetas), dtype=np.uint64)
+
+    # Return the indices of the elements that are non-zero.
     y_idxs, x_idxs = np.nonzero(img)  # (row, col) indexes to edges
 
     # Vote in the hough accumulator
@@ -103,26 +86,36 @@ def find_hough_lines(img):
     return accumulator, thetas, rhos
 
 
-def hough_to_image_space(img, accumulator, thetas, rhos):
+def hough_to_image_space(original_img, detected_img, accumulator, thetas, rhos, plot_input):
 
-    # Easiest peak finding based on max votes
-    idx = np.argmax(accumulator)
-    rho = rhos[int(round(idx / accumulator.shape[1]))]
-    theta = thetas[idx % accumulator.shape[1]]
+    indices = np.where(accumulator > 100)
 
-    a = math.cos(theta)
-    b = math.sin(theta)
-    x0 = a * rho
-    y0 = b * rho
-    pt1 = (int(x0 + 1000 * (-b)), int(y0 + 1000 * (a)))
-    pt2 = (int(x0 - 1000 * (-b)), int(y0 - 1000 * (a)))
+    for i in range(len(indices[0])):
+        # Easiest peak finding based on max votes
+        idx = dene(accumulator.shape[1], indices[0][i], indices[1][i])
+        rho = rhos[int(round(idx / accumulator.shape[1]))]
+        theta = thetas[idx % accumulator.shape[1]]
 
-    print("rho={0:.2f}, theta={1:.0f}".format(rho, np.rad2deg(theta)))
-    lineThickness = 2
-    cv2.line(img, pt1, pt2, (255, 0, 0), lineThickness)
+        a = math.cos(theta)
+        b = math.sin(theta)
+        x0 = a * rho
+        y0 = b * rho
+        pt1 = (int(x0 + 1000 * (-b)), int(y0 + 1000 * (a)))
+        pt2 = (int(x0 - 1000 * (-b)), int(y0 - 1000 * (a)))
 
-    return img
+        print("rho={0:.2f}, theta={1:.0f}".format(rho, np.rad2deg(theta)))
+        lineThickness = 2
+        cv2.line(original_img, pt1, pt2, (255, 0, 0), lineThickness)
+        cv2.line(detected_img, pt1, pt2, (255, 0, 0), lineThickness)
+
+    plot_input = np.concatenate((plot_input, original_img), axis=1)
+    plot_input = np.concatenate((plot_input, detected_img), axis=1)
+    return plot_input
+
+
+def dene(m, r, c):
+    return (r * m) + c
 
 
 if __name__ == '__main__':
-    read_original_subset()
+    detect_barcode()
