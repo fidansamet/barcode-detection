@@ -26,6 +26,7 @@ def detect_barcode():
         # Obtain an edge map of the input image
         edges, plot_input = obtain_edge_map(original_img)
 
+        # Mask edge map with ground truth so only barcode lines will be found
         masked_img = cv2.bitwise_and(detected_img, cv2.cvtColor(edges, cv2.COLOR_GRAY2RGB))
 
         # Utilize Hough transform on edge map
@@ -35,21 +36,20 @@ def detect_barcode():
         plot_input = hough_to_image_space(original_img, detected_img, accumulator, thetas, rhos, plot_input)
 
         # PLOT
-        plt.imshow(plot_input, cmap='gray')
+        plt.style.use("ggplot")
+        plt.imshow(cv2.cvtColor(plot_input, cv2.COLOR_BGR2RGB))
         plt.title(''), plt.xticks([]), plt.yticks([])
         plt.show()
 
 
 def obtain_edge_map(img):
-    edges = cv2.Canny(img, 100, 200)
     # sigma = 0.33
     # v = np.median(img)
     # lower = int(max(0, (1.0 - sigma) * v))
     # upper = int(min(255, (1.0 + sigma) * v))
     # edges = cv2.Canny(img, 150, 155, apertureSize=3)
-
+    edges = cv2.Canny(img, 100, 200)
     plot_input = np.concatenate((img, cv2.cvtColor(edges, cv2.COLOR_GRAY2RGB)), axis=1)
-
     return edges, plot_input
 
 
@@ -105,8 +105,8 @@ def hough_to_image_space(original_img, detected_img, accumulator, thetas, rhos, 
 
         print("rho={0:.2f}, theta={1:.0f}".format(rho, np.rad2deg(theta)))
         lineThickness = 2
-        cv2.line(original_img, pt1, pt2, (255, 0, 0), lineThickness)
-        cv2.line(detected_img, pt1, pt2, (255, 0, 0), lineThickness)
+        cv2.line(original_img, pt1, pt2, (0, 0, 255), lineThickness)
+        cv2.line(detected_img, pt1, pt2, (0, 0, 255), lineThickness)
 
     plot_input = np.concatenate((plot_input, original_img), axis=1)
     plot_input = np.concatenate((plot_input, detected_img), axis=1)
