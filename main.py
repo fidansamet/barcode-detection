@@ -7,7 +7,8 @@ import numpy as np
 
 original_subset_dir = "dataset/Original_Subset"
 detection_subset_dir = "dataset/Detection_Subset"
-
+line_thickness = 2
+plt.style.use("ggplot")
 original_subset_image_names = os.listdir(original_subset_dir)
 detection_subset_image_names = os.listdir(detection_subset_dir)
 
@@ -36,20 +37,20 @@ def detect_barcode():
         plot_input = hough_to_image_space(original_img, detected_img, accumulator, thetas, rhos, plot_input)
 
         # PLOT
-        plt.style.use("ggplot")
         plt.imshow(cv2.cvtColor(plot_input, cv2.COLOR_BGR2RGB))
         plt.title(''), plt.xticks([]), plt.yticks([])
         plt.show()
 
 
 def obtain_edge_map(img):
-    # sigma = 0.33
-    # v = np.median(img)
-    # lower = int(max(0, (1.0 - sigma) * v))
-    # upper = int(min(255, (1.0 + sigma) * v))
+    sigma = 0.2
+    v = np.median(img)
+    lower = int(max(0, (1.0 - sigma) * v))
+    upper = int(min(255, (1.0 + sigma) * v))
     # edges = cv2.Canny(img, 150, 155, apertureSize=3)
-    edges = cv2.Canny(img, 100, 200)
+    edges = cv2.Canny(img, lower, upper)
     plot_input = np.concatenate((img, cv2.cvtColor(edges, cv2.COLOR_GRAY2RGB)), axis=1)
+    print("EDGE")
     return edges, plot_input
 
 
@@ -78,21 +79,24 @@ def find_hough_lines(img):
         x = x_idxs[i]
         y = y_idxs[i]
 
+        curr_rhos = np.add(np.array(cos_t) * x, np.array(sin_t) * y) + diag_len
+
         for t_idx in range(num_thetas):
             # Calculate rho. diag_len is added for a positive index
-            rho = int(round(x * cos_t[t_idx] + y * sin_t[t_idx]) + diag_len)
-            accumulator[rho, t_idx] += 1
+            accumulator[int(curr_rhos[t_idx]), t_idx] += 1
 
+    print("HOUGH")
     return accumulator, thetas, rhos
 
 
 def hough_to_image_space(original_img, detected_img, accumulator, thetas, rhos, plot_input):
+    threshold = get_avg_threshold(accumulator)
+    print(threshold)
+    y_idxs, x_idxs = np.where(accumulator >= threshold)
 
-    indices = np.where(accumulator > 100)
-
-    for i in range(len(indices[0])):
+    for i in range(len(y_idxs)):
         # Easiest peak finding based on max votes
-        idx = dene(accumulator.shape[1], indices[0][i], indices[1][i])
+        idx = get_flatten_idx(accumulator.shape[1], y_idxs[i], x_idxs[i])
         rho = rhos[int(round(idx / accumulator.shape[1]))]
         theta = thetas[idx % accumulator.shape[1]]
 
@@ -103,17 +107,35 @@ def hough_to_image_space(original_img, detected_img, accumulator, thetas, rhos, 
         pt1 = (int(x0 + 1000 * (-b)), int(y0 + 1000 * (a)))
         pt2 = (int(x0 - 1000 * (-b)), int(y0 - 1000 * (a)))
 
-        print("rho={0:.2f}, theta={1:.0f}".format(rho, np.rad2deg(theta)))
-        lineThickness = 2
-        cv2.line(original_img, pt1, pt2, (0, 0, 255), lineThickness)
-        cv2.line(detected_img, pt1, pt2, (0, 0, 255), lineThickness)
+        cv2.line(original_img, pt1, pt2, (0, 0, 255), line_thickness)
+        cv2.line(detected_img, pt1, pt2, (0, 0, 255), line_thickness)
 
     plot_input = np.concatenate((plot_input, original_img), axis=1)
     plot_input = np.concatenate((plot_input, detected_img), axis=1)
+    print("TRANSFORM")
     return plot_input
 
 
-def dene(m, r, c):
+def get_n_max_idx(arr, n):
+    idx = np.argpartition(arr, arr.size - n, axis=None)[-n:]
+    a = np.unravel_index(idx, arr.shape)
+    return np.column_stack(a)
+
+
+def get_avg_threshold(accumulator):
+    out_tpl = np.nonzero(accumulator)
+    top_n = int(len(out_tpl[0]) / 1400)
+    print("top n")
+    print(top_n)
+    res = get_n_max_idx(accumulator, top_n)
+    sum = 0
+    for i in range(len(res)):
+        sum += accumulator[res[i][0]][res[i][1]]
+
+    return sum/len(res)
+
+
+def get_flatten_idx(m, r, c):
     return (r * m) + c
 
 
