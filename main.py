@@ -7,13 +7,13 @@ import numpy as np
 
 original_subset_dir = "dataset/Original_Subset"
 detection_subset_dir = "dataset/Detection_Subset"
-line_thickness = 2
-plt.style.use("ggplot")
 original_subset_image_names = os.listdir(original_subset_dir)
 detection_subset_image_names = os.listdir(detection_subset_dir)
+line_thickness = 2
+plt.style.use("ggplot")
 thetas = np.deg2rad(np.arange(-90.0, 90.0))     # Theta range
-cos_t = np.cos(thetas)
-sin_t = np.sin(thetas)
+cos_theta = np.cos(thetas)
+sin_theta = np.sin(thetas)
 num_thetas = len(thetas)
 max_n = 100
 sigma = 0.3
@@ -83,7 +83,7 @@ def find_lines(img):
         y = y_idx[i]
 
         # Calculate current rhos
-        curr_rhos = np.add(np.array(cos_t) * x, np.array(sin_t) * y)
+        curr_rhos = np.add(np.array(cos_theta) * x, np.array(sin_theta) * y)
 
         for t_idx in range(num_thetas):
             # Increment vote of that theta and closest rho by one
@@ -92,14 +92,21 @@ def find_lines(img):
 
 
 def hough_to_image_space(original_img, detected_img, accumulator, rhos, plot_input):
+    # Get threshold
     threshold = get_avg_threshold(accumulator)
+
+    # Get indices of the most clear lines according to threshold
     y_idx, x_idx = np.where(accumulator >= threshold)
 
     for i in range(len(y_idx)):
-        idx = get_flatten_idx(accumulator.shape[1], y_idx[i], x_idx[i])
-        rho = rhos[int(round(idx / accumulator.shape[1]))]
-        theta = thetas[idx % accumulator.shape[1]]
+        # Get flatten index to find rho and theta
+        flatten_idx = get_flatten_idx(accumulator.shape[1], y_idx[i], x_idx[i])
 
+        # Find rho and theta parameter of current line
+        rho = rhos[int(round(flatten_idx / accumulator.shape[1]))]
+        theta = thetas[flatten_idx % accumulator.shape[1]]
+
+        # Convert Hough space to image space
         cos = math.cos(theta)
         sin = math.sin(theta)
         x = cos * rho
@@ -107,6 +114,7 @@ def hough_to_image_space(original_img, detected_img, accumulator, rhos, plot_inp
         from_point = (int(x + 1000 * (-sin)), int(y + 1000 * cos))
         to_point = (int(x - 1000 * (-sin)), int(y - 1000 * cos))
 
+        # Draw lines on original and detected images
         cv2.line(original_img, from_point, to_point, (0, 0, 255), line_thickness)
         cv2.line(detected_img, from_point, to_point, (0, 0, 255), line_thickness)
 
