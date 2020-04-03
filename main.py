@@ -11,6 +11,11 @@ line_thickness = 2
 plt.style.use("ggplot")
 original_subset_image_names = os.listdir(original_subset_dir)
 detection_subset_image_names = os.listdir(detection_subset_dir)
+# Cache some resuable values
+thetas = np.deg2rad(np.arange(-90.0, 90.0))
+cos_t = np.cos(thetas)
+sin_t = np.sin(thetas)
+num_thetas = len(thetas)
 
 
 def detect_barcode():
@@ -22,16 +27,16 @@ def detect_barcode():
         detected_img = cv2.imread(detection_subset_dir + '/' + image_name)
 
         gray_img = cv2.cvtColor(original_img, cv2.COLOR_BGR2GRAY)
-        #blurred = cv2.GaussianBlur(gray_img, (3, 3), 0)
+        blurred = cv2.GaussianBlur(gray_img, (3, 3), 0)
 
         # Obtain an edge map of the input image
-        edges, plot_input = obtain_edge_map(original_img)
+        edges, plot_input = obtain_edge_map(original_img, gray_img)
 
         # Mask edge map with ground truth so only barcode lines will be found
         masked_img = cv2.bitwise_and(detected_img, cv2.cvtColor(edges, cv2.COLOR_GRAY2RGB))
 
         # Utilize Hough transform on edge map
-        accumulator, thetas, rhos = find_hough_lines(cv2.cvtColor(masked_img, cv2.COLOR_RGB2GRAY))
+        accumulator, thetas, rhos = find_lines(cv2.cvtColor(masked_img, cv2.COLOR_RGB2GRAY))
 
         # Transform Hough space to image space
         plot_input = hough_to_image_space(original_img, detected_img, accumulator, thetas, rhos, plot_input)
@@ -42,30 +47,27 @@ def detect_barcode():
         plt.show()
 
 
-def obtain_edge_map(img):
-    sigma = 0.2
+def obtain_edge_map(img, gray_img):
+    #blurred = cv2.GaussianBlur(gray_img, (5, 5), 0)
+    blurred = cv2.medianBlur(gray_img, 7)
+
+    sigma = 0.33
     v = np.median(img)
     lower = int(max(0, (1.0 - sigma) * v))
     upper = int(min(255, (1.0 + sigma) * v))
-    # edges = cv2.Canny(img, 150, 155, apertureSize=3)
-    edges = cv2.Canny(img, lower, upper)
+    edges = cv2.Canny(blurred, lower, upper, L2gradient=True)
+    #edges = cv2.Canny(img, lower, upper)
     plot_input = np.concatenate((img, cv2.cvtColor(edges, cv2.COLOR_GRAY2RGB)), axis=1)
     print("EDGE")
     return edges, plot_input
 
 
-def find_hough_lines(img):
+def find_lines(img):
     # Rho and Theta ranges
-    thetas = np.deg2rad(np.arange(-90.0, 90.0))
     width = img.shape[0]
     height = img.shape[1]
     diag_len = int(np.ceil(np.sqrt(width * width + height * height)))   # max_dist
     rhos = np.linspace(-diag_len, diag_len, diag_len * 2)
-
-    # Cache some resuable values
-    cos_t = np.cos(thetas)
-    sin_t = np.sin(thetas)
-    num_thetas = len(thetas)
 
     # Hough accumulator array of theta vs rho
     # 2 * diag_len rows, num_thetas columns
@@ -79,11 +81,11 @@ def find_hough_lines(img):
         x = x_idxs[i]
         y = y_idxs[i]
 
-        curr_rhos = np.add(np.array(cos_t) * x, np.array(sin_t) * y) + diag_len
+        curr_rhos = np.add(np.array(cos_t) * x, np.array(sin_t) * y)
 
         for t_idx in range(num_thetas):
             # Calculate rho. diag_len is added for a positive index
-            accumulator[int(curr_rhos[t_idx]), t_idx] += 1
+            accumulator[int(round(curr_rhos[t_idx]) + diag_len), t_idx] += 1
 
     print("HOUGH")
     return accumulator, thetas, rhos
@@ -91,7 +93,7 @@ def find_hough_lines(img):
 
 def hough_to_image_space(original_img, detected_img, accumulator, thetas, rhos, plot_input):
     threshold = get_avg_threshold(accumulator)
-    print(threshold)
+    print("threshold ", threshold)
     y_idxs, x_idxs = np.where(accumulator >= threshold)
 
     for i in range(len(y_idxs)):
@@ -124,9 +126,8 @@ def get_n_max_idx(arr, n):
 
 def get_avg_threshold(accumulator):
     out_tpl = np.nonzero(accumulator)
-    top_n = int(len(out_tpl[0]) / 1400)
-    print("top n")
-    print(top_n)
+    top_n = 110
+    print("top n ", top_n)
     res = get_n_max_idx(accumulator, top_n)
     sum = 0
     for i in range(len(res)):
@@ -134,6 +135,11 @@ def get_avg_threshold(accumulator):
 
     return sum/len(res)
 
+
+
+def aa(accumulator):
+
+    return np.median(accumulator[np.nonzero(accumulator)])
 
 def get_flatten_idx(m, r, c):
     return (r * m) + c
