@@ -11,14 +11,15 @@ line_thickness = 2
 plt.style.use("ggplot")
 original_subset_image_names = os.listdir(original_subset_dir)
 detection_subset_image_names = os.listdir(detection_subset_dir)
-# Cache some resuable values
-thetas = np.deg2rad(np.arange(-90.0, 90.0))
+thetas = np.deg2rad(np.arange(-90.0, 90.0))     # Theta range
 cos_t = np.cos(thetas)
 sin_t = np.sin(thetas)
 num_thetas = len(thetas)
+max_n = 100
+sigma = 0.3
 
 
-def detect_barcode():
+def detect_barcode_lines():
     for image_name in original_subset_image_names:
         print(image_name)
 
@@ -26,124 +27,114 @@ def detect_barcode():
         original_img = cv2.imread(original_subset_dir + '/' + image_name)
         detected_img = cv2.imread(detection_subset_dir + '/' + image_name)
 
-        gray_img = cv2.cvtColor(original_img, cv2.COLOR_BGR2GRAY)
-        blurred = cv2.GaussianBlur(gray_img, (3, 3), 0)
-
-        # Obtain an edge map of the input image
-        edges, plot_input = obtain_edge_map(original_img, gray_img)
+        # Obtain edge map of the input image
+        edges, plot_input = obtain_edge_map(original_img)
 
         # Mask edge map with ground truth so only barcode lines will be found
         masked_img = cv2.bitwise_and(detected_img, cv2.cvtColor(edges, cv2.COLOR_GRAY2RGB))
 
         # Utilize Hough transform on edge map
-        accumulator, thetas, rhos = find_lines(cv2.cvtColor(masked_img, cv2.COLOR_RGB2GRAY))
+        accumulator, rhos = find_lines(cv2.cvtColor(masked_img, cv2.COLOR_RGB2GRAY))
 
         # Transform Hough space to image space
-        plot_input = hough_to_image_space(original_img, detected_img, accumulator, thetas, rhos, plot_input)
+        plot_input = hough_to_image_space(original_img, detected_img, accumulator, rhos, plot_input)
 
-        # PLOT
+        # Plot result
         plt.imshow(cv2.cvtColor(plot_input, cv2.COLOR_BGR2RGB))
         plt.title(''), plt.xticks([]), plt.yticks([])
         plt.show()
 
 
-def obtain_edge_map(img, gray_img):
-    #blurred = cv2.GaussianBlur(gray_img, (5, 5), 0)
+def obtain_edge_map(img):
+    # Blur the image to reduce noise
+    gray_img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
     blurred = cv2.medianBlur(gray_img, 7)
 
-    sigma = 0.33
-    v = np.median(img)
-    lower = int(max(0, (1.0 - sigma) * v))
-    upper = int(min(255, (1.0 + sigma) * v))
-    edges = cv2.Canny(blurred, lower, upper, L2gradient=True)
-    #edges = cv2.Canny(img, lower, upper)
+    # Apply Canny edge detection to image
+    median = np.median(img)
+    lower_threshold = int(max(0, (1.0 - sigma) * median))
+    upper_threshold = int(min(255, (1.0 + sigma) * median))
+    edges = cv2.Canny(blurred, lower_threshold, upper_threshold)
+
+    # Concat original and edge image for plot
     plot_input = np.concatenate((img, cv2.cvtColor(edges, cv2.COLOR_GRAY2RGB)), axis=1)
-    print("EDGE")
     return edges, plot_input
 
 
 def find_lines(img):
-    # Rho and Theta ranges
     width = img.shape[0]
     height = img.shape[1]
-    diag_len = int(np.ceil(np.sqrt(width * width + height * height)))   # max_dist
-    rhos = np.linspace(-diag_len, diag_len, diag_len * 2)
 
-    # Hough accumulator array of theta vs rho
-    # 2 * diag_len rows, num_thetas columns
-    accumulator = np.zeros((2 * diag_len, num_thetas), dtype=np.uint64)
+    # Diagonal length of the image
+    diagonal_length = int(np.ceil(np.sqrt(width * width + height * height)))
 
-    # Return the indices of the elements that are non-zero.
-    y_idxs, x_idxs = np.nonzero(img)  # (row, col) indexes to edges
+    # Rho ranges from -diagonal_length to +diagonal_length of the image
+    rhos = np.linspace(-diagonal_length, diagonal_length, diagonal_length * 2)
 
-    # Vote in the hough accumulator
-    for i in range(len(x_idxs)):
-        x = x_idxs[i]
-        y = y_idxs[i]
+    # Hough transform vote accumulator: 2 * diagonal_length rows, num_thetas columns
+    accumulator = np.zeros((2 * diagonal_length, num_thetas), dtype=np.uint64)
 
+    # Get (row, col) indexes to edges indices that are non-zero
+    y_idx, x_idx = np.nonzero(img)
+
+    # Vote in accumulator
+    for i in range(len(x_idx)):
+        x = x_idx[i]
+        y = y_idx[i]
+
+        # Calculate current rhos
         curr_rhos = np.add(np.array(cos_t) * x, np.array(sin_t) * y)
 
         for t_idx in range(num_thetas):
-            # Calculate rho. diag_len is added for a positive index
-            accumulator[int(round(curr_rhos[t_idx]) + diag_len), t_idx] += 1
-
-    print("HOUGH")
-    return accumulator, thetas, rhos
+            # Increment vote of that theta and closest rho by one
+            accumulator[int(round(curr_rhos[t_idx]) + diagonal_length), t_idx] += 1
+    return accumulator, rhos
 
 
-def hough_to_image_space(original_img, detected_img, accumulator, thetas, rhos, plot_input):
+def hough_to_image_space(original_img, detected_img, accumulator, rhos, plot_input):
     threshold = get_avg_threshold(accumulator)
-    print("threshold ", threshold)
-    y_idxs, x_idxs = np.where(accumulator >= threshold)
+    y_idx, x_idx = np.where(accumulator >= threshold)
 
-    for i in range(len(y_idxs)):
-        # Easiest peak finding based on max votes
-        idx = get_flatten_idx(accumulator.shape[1], y_idxs[i], x_idxs[i])
+    for i in range(len(y_idx)):
+        idx = get_flatten_idx(accumulator.shape[1], y_idx[i], x_idx[i])
         rho = rhos[int(round(idx / accumulator.shape[1]))]
         theta = thetas[idx % accumulator.shape[1]]
 
-        a = math.cos(theta)
-        b = math.sin(theta)
-        x0 = a * rho
-        y0 = b * rho
-        pt1 = (int(x0 + 1000 * (-b)), int(y0 + 1000 * (a)))
-        pt2 = (int(x0 - 1000 * (-b)), int(y0 - 1000 * (a)))
+        cos = math.cos(theta)
+        sin = math.sin(theta)
+        x = cos * rho
+        y = sin * rho
+        from_point = (int(x + 1000 * (-sin)), int(y + 1000 * cos))
+        to_point = (int(x - 1000 * (-sin)), int(y - 1000 * cos))
 
-        cv2.line(original_img, pt1, pt2, (0, 0, 255), line_thickness)
-        cv2.line(detected_img, pt1, pt2, (0, 0, 255), line_thickness)
+        cv2.line(original_img, from_point, to_point, (0, 0, 255), line_thickness)
+        cv2.line(detected_img, from_point, to_point, (0, 0, 255), line_thickness)
 
     plot_input = np.concatenate((plot_input, original_img), axis=1)
     plot_input = np.concatenate((plot_input, detected_img), axis=1)
-    print("TRANSFORM")
     return plot_input
 
 
-def get_n_max_idx(arr, n):
-    idx = np.argpartition(arr, arr.size - n, axis=None)[-n:]
-    a = np.unravel_index(idx, arr.shape)
-    return np.column_stack(a)
+def get_n_max_idx(arr):
+    # Find n number of maximum numbers in arr
+    indices = np.argpartition(arr, arr.size - max_n, axis=None)[-max_n:]
+    return np.column_stack(np.unravel_index(indices, arr.shape))
 
 
-def get_avg_threshold(accumulator):
-    out_tpl = np.nonzero(accumulator)
-    top_n = 110
-    print("top n ", top_n)
-    res = get_n_max_idx(accumulator, top_n)
-    sum = 0
-    for i in range(len(res)):
-        sum += accumulator[res[i][0]][res[i][1]]
+def get_avg_threshold(arr):
+    # Get max_n number of maximum numbers in arr
+    n_max_idx = get_n_max_idx(arr)
 
-    return sum/len(res)
-
+    # Calculate average of max_n numbers
+    sum = 0.0
+    for i in range(len(n_max_idx)):
+        sum += arr[n_max_idx[i][0]][n_max_idx[i][1]]
+    return sum/len(n_max_idx)
 
 
-def aa(accumulator):
-
-    return np.median(accumulator[np.nonzero(accumulator)])
-
-def get_flatten_idx(m, r, c):
-    return (r * m) + c
+def get_flatten_idx(total_cols, row, col):
+    return (row * total_cols) + col
 
 
 if __name__ == '__main__':
-    detect_barcode()
+    detect_barcode_lines()
